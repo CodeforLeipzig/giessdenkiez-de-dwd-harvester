@@ -26,6 +26,16 @@ env LDFLAGS='-L/usr/local/lib -L/usr/local/opt/openssl/lib -L/usr/local/opt/read
 
 As some of python's gdal bindings are not as good as the command line tool, i had to use the original. Therefore, `gdal` needs to be installed. GDAL is a dependency in requirements.txt, but sometimes this does not work. Then GDAL needs to be installed manually. Afterwards, make sure the command line calls for `gdalwarp` and `gdal_polygonize.py` are working.
 
+Docker way: Downgrade gdal to 2.2.2 in requirements.txt
+```
+docker pull consbio/python3.6-gdal2
+docker run -it --rm -v /home/joerg/git/giessdenkiez-de-dwd-harvester/harvester/:/root/mydata/ consbio/python3.6-gdal2 /bin/bash
+cd /root/mydata
+pip install --upgrade pip
+pip install -r requirements.txt
+python ./prepare.py
+```
+
 #### Linux
 
 Here is a good explanation on how to install gdal on linux: https://mothergeo-py.readthedocs.io/en/latest/development/how-to/gdal-ubuntu-pkg.html
