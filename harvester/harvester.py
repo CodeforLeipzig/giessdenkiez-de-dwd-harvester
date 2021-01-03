@@ -177,11 +177,14 @@ for counter, file in enumerate(filelist):
       with conn.cursor() as cur:
         # just to be sure
         cur.execute("DELETE FROM radolan_temp;")
-        psycopg2.extras.execute_batch(
-            cur,
-            "INSERT INTO radolan_temp (geometry, value, measured_at) VALUES (ST_Multi(ST_Transform(ST_GeomFromText(%s, 3857), 4326)), %s, %s);",
-            values
-        )
+        try: 
+          psycopg2.extras.execute_batch(
+              cur,
+              "INSERT INTO radolan_temp (geometry, value, measured_at) VALUES (ST_Multi(ST_Transform(ST_GeomFromText(%s, 3857), 4326)), %s, %s);",
+              values
+          )
+        except:
+          logging.error("❌Could not insert into radolan_temp")
         # in order to keep our database fast and small, we are not storing the original polygonized data, but instead we are using a grid and only store the grid ids and the corresponding precipitation data
         cur.execute("INSERT INTO radolan_data (geom_id, value, measured_at) SELECT radolan_geometry.id, radolan_temp.value, radolan_temp.measured_at FROM radolan_geometry JOIN radolan_temp ON ST_WithIn(radolan_geometry.centroid, radolan_temp.geometry);")
         cur.execute("DELETE FROM radolan_temp;")
@@ -255,23 +258,29 @@ if len(filelist) > 0:
   for cellindex, cell in enumerate(grid):
     values.append([clean[cellindex], sum(clean[cellindex]), cell[1]])
 
-  with conn.cursor() as cur:
-    psycopg2.extras.execute_batch(
-        cur,
-        "UPDATE trees SET radolan_days = %s, radolan_sum = %s WHERE ST_CoveredBy(geom, ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326));",
-        values
-    )
-    conn.commit()
+  try: 
+    with conn.cursor() as cur:
+      psycopg2.extras.execute_batch(
+          cur,
+          "UPDATE trees SET radolan_days = %s, radolan_sum = %s WHERE ST_CoveredBy(geom, ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326));",
+          values
+      )
+      conn.commit()
+  except:
+    logging.error("❌Could not update radolan days")
 
   # update all the trees we have missed with the first round :(
   logging.info("updating sad trees 🌳")
-  with conn.cursor() as cur:
-    psycopg2.extras.execute_batch(
-        cur,
-        "UPDATE trees SET radolan_days = %s, radolan_sum = %s WHERE trees.radolan_sum IS NULL AND ST_CoveredBy(geom, ST_Buffer(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326), 0.00005));",
-        values
-    )
-    conn.commit()
+  try: 
+    with conn.cursor() as cur:
+      psycopg2.extras.execute_batch(
+          cur,
+          "UPDATE trees SET radolan_days = %s, radolan_sum = %s WHERE trees.radolan_sum IS NULL AND ST_CoveredBy(geom, ST_Buffer(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326), 0.00005));",
+          values
+      )
+      conn.commit()
+  except:
+    logging.error("❌Could not update radolan days")
 
   values = None
 
@@ -304,15 +313,14 @@ if len(filelist) > 0:
     geojson_bindata = bytearray(geojson_data)
     with gzip.open(path + file_name + ".gz", "wb") as f:
 	    f.write(geojson_bindata)
-    s3.upload_file(path + file_name + ".gz", os.getenv("S3_BUCKET"), file_name + ".gz", ExtraArgs={'ContentType': 'application/json', 'ContentEncoding': 'gzip'})
+    s3.upload_file(path + file_name + ".gz", os.getenv("S3_BUCKET"), file_name + ".gz", ExtraArgs={'ContentType': 'application/json', 'ContentEncoding': 'gzip', 'ACL': 'public-read'})
 
   finishGeojson(features, "weather.geojson")
   finishGeojson(features_light, "weather_light.geojson")
 
   # create a CSV with all trees (id, lat, lng, radolan_sum)
   with conn.cursor() as cur:
-    # WARNING: The db is still mislabeled lat <> lng
-    cur.execute("SELECT trees.id, trees.lat, trees.lng, trees.radolan_sum, CASE WHEN trees.pflanzjahr > 1000 THEN date_part('year', CURRENT_DATE) - trees.pflanzjahr ELSE NULL END AS age FROM trees WHERE ST_CONTAINS(ST_SetSRID((SELECT ST_EXTENT(geometry) FROM radolan_geometry), 4326), trees.geom)")
+    cur.execute("SELECT trees.id, trees.lng, trees.lat, trees.radolan_sum, CASE WHEN trees.pflanzjahr > 1000 THEN date_part('year', CURRENT_DATE) - trees.pflanzjahr ELSE NULL END AS age FROM trees WHERE ST_CONTAINS(ST_SetSRID((SELECT ST_EXTENT(geometry) FROM radolan_geometry), 4326), trees.geom)")
     trees = cur.fetchall()
     trees_head = "id,lng,lat,radolan_sum,age"
     trees_csv = trees_head
@@ -354,14 +362,14 @@ if len(filelist) > 0:
     csv_data = bytes(trees_csv, "utf-8")
     with gzip.open(path + "trees.csv.gz", "wb") as f:
 	    f.write(csv_data)
-    s3.upload_file(path + "trees.csv.gz", os.getenv("S3_BUCKET"), "trees.csv.gz", ExtraArgs={'ContentType': 'text/csv', 'ContentEncoding': 'gzip'})
+    s3.upload_file(path + "trees.csv.gz", os.getenv("S3_BUCKET"), "trees.csv.gz", ExtraArgs={'ContentType': 'text/csv', 'ContentEncoding': 'gzip', 'ACL': 'public-read'})
 
     for i in range(4):
       s3.upload_file(path + "trees-p{}.csv".format(i + 1), os.getenv("S3_BUCKET"), "trees-p{}.csv".format(i + 1))
       csv_data = bytes(singleCSVs[i], "utf-8")
       with gzip.open(path + "trees-p{}.csv.gz".format(i + 1), "wb") as f:
         f.write(csv_data)
-      s3.upload_file(path + "trees-p{}.csv.gz".format(i + 1), os.getenv("S3_BUCKET"), "trees-p{}.csv.gz".format(i + 1), ExtraArgs={'ContentType': 'text/csv', 'ContentEncoding': 'gzip'})
+      s3.upload_file(path + "trees-p{}.csv.gz".format(i + 1), os.getenv("S3_BUCKET"), "trees-p{}.csv.gz".format(i + 1), ExtraArgs={'ContentType': 'text/csv', 'ContentEncoding': 'gzip', 'ACL': 'public-read'})
 
     # send the updated csv to mapbox
 
@@ -382,9 +390,11 @@ if len(filelist) > 0:
     # tell mapbox that new data has arrived
 
     url = "https://api.mapbox.com/uploads/v1/{}?access_token={}".format(os.getenv("MAPBOXUSERNAME"), os.getenv("MAPBOXTOKEN"))
-    payload = '{{"url":"http://{}.s3.amazonaws.com/{}","tileset":"{}.{}"}}'.format(s3_credentials["bucket"], s3_credentials["key"], os.getenv("MAPBOXUSERNAME"), os.getenv("MAPBOXTILESET"))
+    # assuming tileset = <mapboxusername>.<tilesetname>
+    payload = '{{"url":"http://{}.s3.amazonaws.com/{}","tileset":"{}"}}'.format(s3_credentials["bucket"], s3_credentials["key"], os.getenv("MAPBOXTILESET"))
     headers = {'content-type': 'application/json', 'Accept-Charset': 'UTF-8', 'Cache-Control': 'no-cache'}
     response = requests.post(url, data=payload, headers=headers)
+    logging.info("Updated mapbox with response: {}".format(response))
 
     trees_csv = None
     csv_data = None
